@@ -49,6 +49,7 @@ if __name__ == "__main__":
     # use GPU if available
     pydiffvg.set_use_gpu(torch.cuda.is_available())
     device = pydiffvg.get_device()
+    print("device: ", device)
 
     print("preprocessing")
     preprocess(cfg.font, cfg.word, cfg.optimized_letter, cfg.level_of_cc)

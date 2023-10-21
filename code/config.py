@@ -29,6 +29,7 @@ def parse_args():
     parser.add_argument('--batch_size', type=int, default=1)
     parser.add_argument('--use_wandb', type=int, default=0)
     parser.add_argument('--wandb_user', type=str, default="none")
+    parser.add_argument('--prompt_prefix', type=str, default="a") # 追加
 
     cfg = edict()
     args = parser.parse_args()
@@ -42,7 +43,8 @@ def parse_args():
     cfg.word = cfg.semantic_concept if args.word == "none" else args.word
     if " " in cfg.word:
       raise ValueError(f'no spaces are allowed')
-    cfg.caption = f"a {args.semantic_concept}. {args.prompt_suffix}"
+    cfg.caption = f"{args.prompt_prefix} {args.semantic_concept}. {args.prompt_suffix}" # ここで意味概念を定義している。
+    print("generate prompt is: ", cfg.caption)
     cfg.log_dir = f"{args.log_dir}/{args.experiment}_{cfg.word}"
     if args.optimized_letter in cfg.word:
         cfg.optimized_letter = args.optimized_letter
