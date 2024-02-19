@@ -1,10 +1,5 @@
 # 山倉隆太卒業研究
 
-<br>
-<div align="center">
-    <img src="images/teaser.png" width="100%">
-</div>
-<br><br>
 卒業研究で作成したベクター画像生成AIのコードです。またこのコードは、<a href="https://github.com/Shiriluz/Word-As-Image">Word-As-Image</a>をもとに改変し作成しました。
 なお、コードの清書は未だ行われていません。あくまで成果物として評価をいただけると幸いです。
 
