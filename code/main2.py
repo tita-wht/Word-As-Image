@@ -1,17 +1,10 @@
 """
-python code/main.py --word "NATURE" --optimized_letter "T" --font "HobeauxRococeaux-Sherman" --experiment "svg_image" --device "cuda:3" --semantic_concept "bunny" 
-/home/yanai-lab/yamakura-r/space0/apps/Word-As-Image/code/data/init/HobeauxRococeaux-Sherman_A_scaled.svg
-python code/main.py --seed -1 --target_file "test2" --experiment "svg_image" --device "cuda:3" --semantic_concept "Fire" 
-"LuckiestGuy-Regular"
+python code/main.py  --semantic_concept "LEAVES" --word "NATURE" --optimized_letter "T" --font "HobeauxRococeaux-Sherman" 
+--seed 0
+
 python code/main.py  --semantic_concept "bunny" --target_file "star" --device "cuda:1"
 
 python code/main.py  --semantic_concept "bunny" --target_file "star"  --use_wandb 1 --wandb_user y_ryuta1301
-
-python code/main.py  --semantic_concept "shoes" --target_file "star" --device "cuda:1" --experiment "ab_tonekernel"
-python code/main.py --semantic_concept "water" --target_file "star" --device "cuda:0" --experiment "ex_npath"
-python code/main.py --seed -1 --target_file "star" --experiment "svg_image" --semantic_concept "fire"  --device "cuda:0" --log_dir "ex4/video" 
-
-python code/main.py --seed -1 --target_file "HobeauxRococeaux-Sherman_R_scaled" --experiment "svg_image" --device "cuda:0" --semantic_concept "Fire" 
 """
 
 from typing import Mapping
@@ -28,7 +21,7 @@ from torch.optim.lr_scheduler import LambdaLR
 import pydiffvg
 import save_svg
 import math
-from losses import SDSLoss, ToneLoss, ConformalLoss, DistanceTransformLoss, CircumferenceLoss, ClipLoss
+from losses import SDSLoss, ToneLoss, ConformalLoss, DistanceTransformLoss, CircumferenceLoss
 from config import set_config
 from utils import *
 from init_func import *
@@ -41,7 +34,9 @@ pydiffvg.set_print_timing(False)
 gamma = 1.0
 
 
-def main(cfg):
+if __name__ == "__main__":
+    
+    cfg = set_config()
     num_paths = cfg.num_paths
 
     # use GPU if available
@@ -51,9 +46,9 @@ def main(cfg):
     print("device: ", device)
 
     print("preprocessing")
+    svg = pydiffvg.svg_to_scene(cfg.target+".svg") # (svg_w,svg_h,[Shapes],[ShapeGroups])
     if cfg.font != "none":
         preprocess(cfg.font, cfg.word, cfg.optimized_letter, cfg.level_of_cc) # ここ
-    svg = pydiffvg.svg_to_scene(cfg.target+".svg") # (svg_w,svg_h,[Shapes],[ShapeGroups])
 
     h, w = cfg.render_size, cfg.render_size 
 
@@ -124,7 +119,8 @@ def main(cfg):
                 shape_group.fill_color.requires_grad = True
                 parameters.color.append(shape_group.fill_color)
 
-    scene_args = pydiffvg.RenderFunction.serialize_scene(w, h, shapes, shape_groups)
+    nnn = 20
+    scene_args = pydiffvg.RenderFunction.serialize_scene(w, h, shapes, shape_groups[:nnn])
 
     """"""
     ### 背景画像読み込み ###
@@ -150,7 +146,6 @@ def main(cfg):
     ### SDS loss ###
     if cfg.loss.use_sds_loss:
         sds_loss = SDSLoss(cfg, device)
-        clip_loss = ClipLoss(cfg)
     ### tone loss ###
     if cfg.loss.tone.use_tone_loss:
         tone_loss = ToneLoss(cfg)
@@ -175,7 +170,7 @@ def main(cfg):
     ### loop setting ###    
     num_iter = cfg.num_iter
     pg = [{'params': parameters["point"], 'lr': cfg.lr_base["point"]}]
-    pg_color = [{'params': parameters["color"], 'lr': cfg.lr_base["color"]}]
+    pg_color = [{'params': parameters["color"], 'lr': 1e-3}]
     optim = torch.optim.Adam(pg, betas=(0.9, 0.9), eps=1e-6)
     optim_color = torch.optim.Adam(pg_color, betas=(0.9,0.9), eps=1e-6)
 
@@ -203,23 +198,20 @@ def main(cfg):
     ### training loop ###
     print("start training")
     t_range = tqdm(range(num_iter))
-    # t_range =range(num_iter)
     for step in t_range:
-        # print(step)
         # print(shapes[0].points.size())
         if cfg.use_wandb:
             wandb.log({"learning_rate": optim.param_groups[0]['lr']}, step=step)
-            wandb.log({"learning_rate_color": optim_color.param_groups[0]['lr']}, step=step)
         optim.zero_grad()
         optim_color.zero_grad()
-        
-
 
         # render image
         # for i in range(len(shapes)):
             # print(torch.find(shapes[i].points==NaN,))
         bg_noise = torch.rand((w,h,4), device=device) # 白色部分を背景でごまかすの防止用
-        scene_args = pydiffvg.RenderFunction.serialize_scene(w, h, shapes, shape_groups)
+        if nnn<len(shape_groups): nnn = nnn + len(shape_groups)*2/num_iter
+        # print(nnn)
+        scene_args = pydiffvg.RenderFunction.serialize_scene(w, h, shapes, shape_groups[:int(nnn)])
         img = render(w, h, 2, 2, step, bg_noise, *scene_args)
 
         # compose image with white background
@@ -239,19 +231,16 @@ def main(cfg):
         img = img[:, :, :3]
 
         if cfg.save.video and (step % cfg.save.video_frame_freq == 0 or step == num_iter - 1):
-            with torch.no_grad():
-                bg_white = torch.ones_like(bg_noise)
-                save_img = render(w, h, 2, 2, step, bg_white, *scene_args)
-                save_image(save_img, os.path.join(cfg.experiment_dir, "video-png", f"iter{step:04d}.png"), gamma)
-                filename = os.path.join(
-                    cfg.experiment_dir, "video-svg", f"iter{step:04d}.svg")
-                check_and_create_dir(filename)
-                save_svg.save_svg(
-                    filename, w, h, shapes, shape_groups)
-                if cfg.use_wandb:
-                    plt.imshow(save_img.detach().cpu())
-                    wandb.log({"img": wandb.Image(plt)}, step=step)
-                    plt.close()
+            save_image(img, os.path.join(cfg.experiment_dir, "video-png", f"iter{step:04d}.png"), gamma)
+            filename = os.path.join(
+                cfg.experiment_dir, "video-svg", f"iter{step:04d}.svg")
+            check_and_create_dir(filename)
+            save_svg.save_svg(
+                filename, w, h, shapes, shape_groups)
+            if cfg.use_wandb:
+                plt.imshow(img.detach().cpu())
+                wandb.log({"img": wandb.Image(plt)}, step=step)
+                plt.close()
 
         # shape_mask = get_shape_mask(w,h,shapes,shape_groups, masking_value=1) 
         # img = img * shape_mask.unsqueeze(2)
@@ -262,7 +251,6 @@ def main(cfg):
 
         # compute diffusion loss per pixel
         loss = sds_loss(x_aug)
-        # loss = clip_loss(x_aug)*10
         loss = loss + CircumferenceLoss.calc_loss(shapes) * cfg.loss.xing.xing_w
         # loss = tone_loss(x_gray)
         if cfg.use_wandb:
@@ -298,16 +286,10 @@ def main(cfg):
         optim_color.step()
         scheduler.step()
         scheduler_color.step()
-
-        parameters["color"] = [torch.clamp(tmp, 0, 1) for tmp in parameters["color"]]
-
-
-        # if step > num_iter/2 and step%(num_iter/5) == 0: 
-        if step > num_iter/2 and step%(8*num_iter/10)==0:
+        if step > num_iter/2 and step%(num_iter/5) == 0: 
             # 要らないパスを減らす
             # 必要なパスのセグメントを増やす
-            # shapes, shape_groups = clean_paths_by_raster(w,h,shapes, shape_groups, threshold=0.003, b=0.3)
-            shapes, shape_groups = clean_behind_paths(w,h,shapes, shape_groups)
+            shapes, shape_groups = clean_paths_by_raster(w,h,shapes, shape_groups, threshold=0.003, b=0.3)
             # if total_segments/len(shapes)*shapes[0].num_control_points.size()[0]>2.0:
             #     shapes = inclease_segments(shapes)
             #     total_segments = len(shapes)*shapes[0].num_control_points.size()[0]
@@ -363,12 +345,3 @@ def main(cfg):
 
     if cfg.use_wandb:
         wandb.finish()
-
-
-if __name__ == "__main__":
-    
-    cfg = set_config()
-    # print(cfg)
-    if cfg.tmp_arg is not None:
-        cfg.num_paths = cfg.tmp_arg
-    main(cfg)

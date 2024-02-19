@@ -9,7 +9,7 @@ python code/main.py  --semantic_concept "bunny" --target_file "star"  --use_wand
 
 python code/main.py  --semantic_concept "shoes" --target_file "star" --device "cuda:1" --experiment "ab_tonekernel"
 python code/main.py --semantic_concept "water" --target_file "star" --device "cuda:0" --experiment "ex_npath"
-python code/main.py --seed -1 --target_file "star" --experiment "svg_image" --semantic_concept "fire"  --device "cuda:0" --log_dir "ex4/video" 
+python code/main.py --seed -1 --target_file "star" --experiment "svg_image" --semantic_concept "leaf"  --device "cuda:0" 
 
 python code/main.py --seed -1 --target_file "HobeauxRococeaux-Sherman_R_scaled" --experiment "svg_image" --device "cuda:0" --semantic_concept "Fire" 
 """
@@ -41,7 +41,9 @@ pydiffvg.set_print_timing(False)
 gamma = 1.0
 
 
-def main(cfg):
+if __name__ == "__main__":
+    
+    cfg = set_config()
     num_paths = cfg.num_paths
 
     # use GPU if available
@@ -150,7 +152,7 @@ def main(cfg):
     ### SDS loss ###
     if cfg.loss.use_sds_loss:
         sds_loss = SDSLoss(cfg, device)
-        clip_loss = ClipLoss(cfg)
+    clip_loss = ClipLoss(cfg)
     ### tone loss ###
     if cfg.loss.tone.use_tone_loss:
         tone_loss = ToneLoss(cfg)
@@ -203,17 +205,12 @@ def main(cfg):
     ### training loop ###
     print("start training")
     t_range = tqdm(range(num_iter))
-    # t_range =range(num_iter)
     for step in t_range:
-        # print(step)
         # print(shapes[0].points.size())
         if cfg.use_wandb:
             wandb.log({"learning_rate": optim.param_groups[0]['lr']}, step=step)
-            wandb.log({"learning_rate_color": optim_color.param_groups[0]['lr']}, step=step)
         optim.zero_grad()
         optim_color.zero_grad()
-        
-
 
         # render image
         # for i in range(len(shapes)):
@@ -239,19 +236,16 @@ def main(cfg):
         img = img[:, :, :3]
 
         if cfg.save.video and (step % cfg.save.video_frame_freq == 0 or step == num_iter - 1):
-            with torch.no_grad():
-                bg_white = torch.ones_like(bg_noise)
-                save_img = render(w, h, 2, 2, step, bg_white, *scene_args)
-                save_image(save_img, os.path.join(cfg.experiment_dir, "video-png", f"iter{step:04d}.png"), gamma)
-                filename = os.path.join(
-                    cfg.experiment_dir, "video-svg", f"iter{step:04d}.svg")
-                check_and_create_dir(filename)
-                save_svg.save_svg(
-                    filename, w, h, shapes, shape_groups)
-                if cfg.use_wandb:
-                    plt.imshow(save_img.detach().cpu())
-                    wandb.log({"img": wandb.Image(plt)}, step=step)
-                    plt.close()
+            save_image(img, os.path.join(cfg.experiment_dir, "video-png", f"iter{step:04d}.png"), gamma)
+            filename = os.path.join(
+                cfg.experiment_dir, "video-svg", f"iter{step:04d}.svg")
+            check_and_create_dir(filename)
+            save_svg.save_svg(
+                filename, w, h, shapes, shape_groups)
+            if cfg.use_wandb:
+                plt.imshow(img.detach().cpu())
+                wandb.log({"img": wandb.Image(plt)}, step=step)
+                plt.close()
 
         # shape_mask = get_shape_mask(w,h,shapes,shape_groups, masking_value=1) 
         # img = img * shape_mask.unsqueeze(2)
@@ -261,8 +255,9 @@ def main(cfg):
 
 
         # compute diffusion loss per pixel
-        loss = sds_loss(x_aug)
-        # loss = clip_loss(x_aug)*10
+        # loss = sds_loss(x_aug)
+        loss = clip_loss(x_aug)
+        # loss = loss + clip_loss(x_aug)
         loss = loss + CircumferenceLoss.calc_loss(shapes) * cfg.loss.xing.xing_w
         # loss = tone_loss(x_gray)
         if cfg.use_wandb:
@@ -298,16 +293,12 @@ def main(cfg):
         optim_color.step()
         scheduler.step()
         scheduler_color.step()
-
-        parameters["color"] = [torch.clamp(tmp, 0, 1) for tmp in parameters["color"]]
-
-
         # if step > num_iter/2 and step%(num_iter/5) == 0: 
         if step > num_iter/2 and step%(8*num_iter/10)==0:
             # 要らないパスを減らす
             # 必要なパスのセグメントを増やす
             # shapes, shape_groups = clean_paths_by_raster(w,h,shapes, shape_groups, threshold=0.003, b=0.3)
-            shapes, shape_groups = clean_behind_paths(w,h,shapes, shape_groups)
+            shapes, shape_groups = clean_behind_paths(w,h,shapes, shape_groups, )
             # if total_segments/len(shapes)*shapes[0].num_control_points.size()[0]>2.0:
             #     shapes = inclease_segments(shapes)
             #     total_segments = len(shapes)*shapes[0].num_control_points.size()[0]
@@ -363,12 +354,3 @@ def main(cfg):
 
     if cfg.use_wandb:
         wandb.finish()
-
-
-if __name__ == "__main__":
-    
-    cfg = set_config()
-    # print(cfg)
-    if cfg.tmp_arg is not None:
-        cfg.num_paths = cfg.tmp_arg
-    main(cfg)

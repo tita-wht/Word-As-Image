@@ -13,7 +13,7 @@ device = torch.device("cuda" if (
 reload(bezier)
 
 def fix_single_svg(svg_path, all_word=False):
-    target_h_letter = 360
+    target_h_letter = 550
     target_canvas_width, target_canvas_height = 600, 600
 
     canvas_width, canvas_height, shapes, shape_groups = pydiffvg.svg_to_scene(svg_path)
@@ -102,6 +102,7 @@ def font_string_to_beziers(font, txt, size=30, spacing=1.0, merge=True, target_c
     ''' Load a font and convert the outlines for a given string to cubic bezier curves,
         if merge is True, simply return a list of all bezier curves,
         otherwise return a list of lists with the bezier curves for each glyph'''
+    # ここ
 
     face = ft.Face(font)
     face.set_char_size(64 * size)
@@ -183,7 +184,12 @@ def write_letter_svg(c, header, fontname, beziers, subdivision_thresh, dest_path
 def font_string_to_svgs(dest_path, font, txt, size=30, spacing=1.0, target_control=None, subdivision_thresh=None):
 
     fontname = os.path.splitext(os.path.basename(font))[0]
-    glyph_beziers = font_string_to_beziers(font, txt, size, spacing, merge=False, target_control=target_control)
+    if txt  == "SVG":
+        print("aaaaaa")
+        # glyph_beziers = svg_devide(txt,size, spacing, merge=False, target_control=target_control)
+    else:
+        glyph_beziers = font_string_to_beziers(font, txt, size, spacing, merge=False, target_control=target_control)
+        # print("fnaha", glyph_beziers, size(glyph_beziers))
     if not os.path.isdir(dest_path):
         os.mkdir(dest_path)
     # Compute boundig box
@@ -261,5 +267,4 @@ if __name__ == '__main__':
         print("DONE")
 
 
-
-
+# def svg_devide(txt,size, spacing, merge=False, target_control=target_control):

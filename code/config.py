@@ -12,24 +12,35 @@ from utils import (
 import wandb
 import warnings
 warnings.filterwarnings("ignore")
+from time import time
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, default="code/config/base.yaml")
-    parser.add_argument("--experiment", type=str, default="conformal_0.5_dist_pixel_100_kernel201")
+    parser.add_argument("--experiment", type=str, default="svg_image")
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument('--log_dir', metavar='DIR', default="output")
+    parser.add_argument('--log_dir', metavar='DIR', default="ex2/any2") 
     parser.add_argument('--font', type=str, default="none", help="font name")
+    parser.add_argument("--device", type=str)
+
+    
+    parser.add_argument('--prompt_prefix', type=str, default="a logo of") # 追加
     parser.add_argument('--semantic_concept', type=str, help="the semantic concept to insert")
-    parser.add_argument('--word', type=str, default="none", help="the text to work on")
     parser.add_argument('--prompt_suffix', type=str, default="minimal flat 2d vector. lineal color."
-                                                             " trending on artstation")
+                                " trending on artstation")
+    parser.add_argument("--shape_encoding", type=bool,default=True)
+    
+    parser.add_argument('--word', type=str, default="none", help="the text to work on")
     parser.add_argument('--optimized_letter', type=str, default="none", help="the letter in the word to optimize")
+
     parser.add_argument('--batch_size', type=int, default=1)
     parser.add_argument('--use_wandb', type=int, default=0)
     parser.add_argument('--wandb_user', type=str, default="none")
-    parser.add_argument('--prompt_prefix', type=str, default="a") # 追加
+
+    parser.add_argument("--target_file", type=str, default="star")
+    parser.add_argument("--crop_part", type=int, default=0)
+    parser.add_argument("--tmp", type=float, default=None)
 
     cfg = edict()
     args = parser.parse_args()
@@ -38,18 +49,25 @@ def parse_args():
     cfg.config = args.config
     cfg.experiment = args.experiment
     cfg.seed = args.seed
+    cfg.seed = random.randint(0,65535) if args.seed == -1 else args.seed
     cfg.font = args.font
     cfg.semantic_concept = args.semantic_concept
     cfg.word = cfg.semantic_concept if args.word == "none" else args.word
-    if " " in cfg.word:
-      raise ValueError(f'no spaces are allowed')
+    # if " " in cfg.word:
+    #   raise ValueError(f'no spaces are allowed')
+    cfg.crop_part = args.crop_part
+    cfg.shape_encoding = args.shape_encoding
+    cfg.device = torch.device(args.device) if torch.cuda.is_available() else torch.device("cpu")
+        
     cfg.caption = f"{args.prompt_prefix} {args.semantic_concept}. {args.prompt_suffix}" # ここで意味概念を定義している。
     print("generate prompt is: ", cfg.caption)
-    cfg.log_dir = f"{args.log_dir}/{args.experiment}_{cfg.word}"
+    cfg.log_dir = f"{args.log_dir}/{args.experiment}_{cfg.word}_{int(time())}"
     if args.optimized_letter in cfg.word:
         cfg.optimized_letter = args.optimized_letter
     else:
-      raise ValueError(f'letter should be in word')
+        cfg.optimized_letter = None
+        print("image optimization mode")
+        # raise ValueError(f'letter should be in word')
     cfg.batch_size = args.batch_size
     cfg.token = args.token
     cfg.use_wandb = args.use_wandb
@@ -57,6 +75,9 @@ def parse_args():
     cfg.letter = f"{args.font}_{args.optimized_letter}_scaled"
     cfg.target = f"code/data/init/{cfg.letter}"
 
+    if args.target_file != "none":
+        cfg.target = f"code/data/init/{args.target_file}"
+    cfg.tmp_arg = args.tmp
     return cfg
 
 

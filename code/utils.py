@@ -9,7 +9,7 @@ import cv2
 from ttf import font_string_to_svgs, normalize_letter_size
 import torch
 import numpy as np
-
+from scipy.integrate import quad
 
 def edict_2_dict(x):
     if isinstance(x, dict):
@@ -219,3 +219,248 @@ def create_video(num_iter, experiment_dir, video_frame_freq):
     for iii in range(len(img_array)):
         out.write(img_array[iii])
     out.release()
+
+
+def clean_paths(shapes, shape_groups, threshold=0.3):
+    print("clean paths: ", len(shapes))
+    for i, shape in enumerate(shapes):
+        if shape_groups[i].fill_color[3] < threshold:
+            del shapes[i]
+            j = i
+            while j < len(shape_groups): 
+                shape_group = shape_groups[j]
+                new_ids = [x-1 for x in shape_group.shape_ids]
+                new_ids = torch.tensor(new_ids)
+                shape_group.shape_ids = new_ids
+                j += 1
+            del shape_groups[i]
+            i -= 1
+    print("num_paths: ", len(shapes))
+    return shapes, shape_groups
+
+def clean_paths_by_shape(shapes, shape_groups, threshold=0.3):
+    print("clean paths: ", len(shapes))
+    del_ids = []
+    f = 0
+    for shape in shapes:
+        if f==0:
+            print(shape.num_control_points)
+            print(shape.points)
+            f = 1
+    print("-> num_paths: ", len(shapes))
+
+
+def clean_paths_by_raster(w,h, shapes, shape_groups, threshold=0.003, b=0.2):
+    print("clean paths by raster: ", len(shapes), end = " ")
+    render = pydiffvg.RenderFunction.apply
+    device = pydiffvg.get_device()
+    bg = torch.zeros(w,h,4, device=device)
+    scene_args = pydiffvg.RenderFunction.serialize_scene(w,h,shapes,shape_groups)
+    img = render(w,h,2,2,0,None,*scene_args)
+
+    # path_area_masks = torch.empty((0,w,h,4),device=device)
+    dists = [] # path一つの画面支配率
+    path_imgs = []
+    for shape_group in shape_groups:
+        sgs = [shape_group]
+        scene_args = pydiffvg.RenderFunction.serialize_scene(w,h,shapes,sgs)
+        single_path_img = render(w,h,2,2,0,bg,*scene_args)
+        path_imgs.append(single_path_img)
+
+        path_area_mask = torch.where(single_path_img!=bg, 1, 0) # （背景色と比較して）path領域内を1,領域外を0のマスクを生成
+        path_area_mask = torch.sum(path_area_mask, dim=2)
+        path_area_mask = torch.where(path_area_mask>=1.0, 1, 0)
+
+        # path_area_masks = torch.cat((path_area_masks, path_area_mask.unsqueeze(0)),dim=0)
+
+        # 面積が小さく、不透明度が低いものを削除したい。
+        dist = torch.sum(path_area_mask)/(w*h) # 面積
+        # dist = dist * shape_group.fill_color[3]
+        gain = 20 # 大きいほど閾値以下の不透明度領域をカット。
+        bias = b # 不透明度の閾値
+        dist = dist * torch.sigmoid((shape_group.fill_color[3]-bias)*gain) # sigmoidによって不透明度を0.3周りで活性化
+        dists.append(dist.item())
+    # single_path_img = single_path_img.detach().cpu()
+    # pydiffvg.imwrite(single_path_img, "tmp.png", gamma=1.0)
+    dists = torch.tensor(dists)
+
+    # ソート情報が必要なとき
+    # dists = torch.tensor(dists)
+    # sorted_indices = torch.argsort(dists)
+    # sorted_values = dists[sorted_indices]
+
+    # 面積+色ベース(dist)によって閾値以下のパスを削除する。
+    i = 0
+    while i<len(shapes):
+        if dists[i]<threshold:
+            del shapes[i]
+            del path_imgs[i]
+            j = i
+            while j<len(shape_groups):
+                shape_group = shape_groups[j]
+                new_ids = [x-1 for x in shape_group.shape_ids]
+                new_ids = torch.tensor(new_ids)
+                shape_group.shape_ids = new_ids
+                j += 1
+            del shape_groups[i]
+            dists = torch.cat((dists[:i], dists[i+1:]),dim=0)
+            i -= 1 # 消した次の要素を飛ばすのを予防
+        i += 1
+    print("-> ", len(shapes))
+    # shapes, shape_groups = clean_behind_paths(shapes, shape_groups, path_imgs)
+    return shapes, shape_groups
+
+def clean_behind_paths(w,h,shapes, shape_groups, threshold=5e-4):
+    # パスとその前景の不透明度より、パスがどの程度投下されているのかを用いてパスを削除
+    # 1e-3,5e-3,1e-4,5e-4,5e-5
+    print("clean_befind_paths:", len(shapes), end=" ")
+    render = pydiffvg.RenderFunction.apply
+    device = pydiffvg.get_device()
+    bg = torch.zeros(w,h,4, device=device)
+    scene_args = pydiffvg.RenderFunction.serialize_scene(w,h,shapes,shape_groups)
+
+    # path_area_masks = torch.empty((0,w,h,4),device=device)
+    path_imgs = []
+    nnnn = len(shapes)
+    for shape_group in shape_groups:
+        sgs = [shape_group]
+        scene_args = pydiffvg.RenderFunction.serialize_scene(w,h,shapes,sgs)
+        single_path_img = render(w,h,2,2,0,bg,*scene_args)
+        path_imgs.append(single_path_img)
+
+    i = 0 
+    leaks = []
+    while i < len(shapes)-1:
+        cur = _mix_paths((path_imgs[i:]))
+        foreground = _mix_paths(path_imgs[i+1:])
+        leak = cur - foreground # path[i]が見えている部分(不透明度)
+        leak = torch.sum(leak**2)/(w*h)
+        # print(leak.item())
+        leaks.append(leak.item())
+        # print(leak.item())
+        if leak < threshold:
+            del shapes[i]
+            del path_imgs[i]
+            j = i
+            while j<len(shape_groups):
+                shape_group = shape_groups[j]
+                new_ids = [x-1 for x in shape_group.shape_ids]
+                new_ids = torch.tensor(new_ids)
+                shape_group.shape_ids = new_ids
+                j += 1
+            del shape_groups[i]
+            i -= 1 # 消した次の要素を飛ばすのを予防
+        i += 1
+    # with open(f'output_{nnnn}.txt', 'w') as file:
+    #     for l in leaks:
+    #         file.write(str(l) + '\n')
+    print("->", len(shapes))
+    return shapes, shape_groups
+    
+def _mix_paths(path_imgs):
+    # 最終不透明度を計算混色する（レンダラの機能分解)
+    w,h,_ = path_imgs[0].size()
+    pre_a = path_imgs[0][:,:,3:4]
+    if len(path_imgs)==1: 
+        return pre_a
+
+    for i in range(1, len(path_imgs)):
+        cur_a = path_imgs[i][:,:,3:4] + pre_a*(1-path_imgs[i][:,:,3:4])
+        pre_a = cur_a
+    return cur_a
+
+
+
+def get_shape_mask(w, h, shapes, shape_groups, masking_value=1e-9):
+    # おそらく負の方向に値が飛んで行っていると思われる
+    render = pydiffvg.RenderFunction.apply
+    device = pydiffvg.get_device()
+    bg = torch.zeros(w,h,4, device=device)
+    scene_args = pydiffvg.RenderFunction.serialize_scene(w,h,shapes,shape_groups)
+    img = render(w,h,2,2,0,None,*scene_args)
+
+    scene_args = pydiffvg.RenderFunction.serialize_scene(w,h,shapes,shape_groups)
+    single_path_img = render(w,h,2,2,0,bg,*scene_args)
+
+    path_area_mask = torch.where(single_path_img!=bg, 1, 0) # （背景色と比較して）path領域内を1,領域外を0のマスクを生成
+    path_area_mask = torch.sum(path_area_mask, dim=2)
+    path_area_mask = torch.where(path_area_mask>=1.0, 1, 0)
+    
+    # path_mask = torch.sum(path_area_mask, dim=0)
+    # path_mask = torch.where(path_mask>=1.0, 0, 1) # 背景部分をマスク1とする。
+    path_area_mask = path_area_mask * masking_value
+
+    return path_area_mask
+
+def inclease_segments(shapes, magnification=2):
+    # デ・カステロのアルゴリズムを用いてパスを分割(セグメントを増加)
+    print("inclease segments:", shapes[0].points.size()[0], end=" ")
+    new_shapes = []
+    # pathは閉じているものと仮定
+    for s, shape in enumerate(shapes):
+        ncp = shape.num_control_points
+        points = shape.points
+        new_ncp = torch.zeros(len(ncp)*magnification, dtype=torch.int32) + 2
+        new_points = points[0].detach().clone().unsqueeze(0)
+        with torch.no_grad():
+            for i in range(len(ncp)):
+                ctrls = points[i*3: i*3+3]
+                if i != len(ncp)-1:
+                    ctrls = torch.cat((ctrls, points[i*3+3].unsqueeze(0)),dim=0)
+                else:
+                    ctrls = torch.cat((ctrls, points[0].unsqueeze(0)),dim=0)
+                for j in range(magnification-1):
+                    ctrls0, ctrls1 = _deCasteljau(ctrls, 1.0*(j+1)/magnification)
+                    new_points = torch.cat((new_points, ctrls0[1:]),dim=0)
+                    new_points = torch.cat((new_points, ctrls1[1:]),dim=0)
+            new_points = new_points[:-1] # 最後の要素=最初の要素
+            new_points.requires_grad = True
+            # print(points)
+            # print(new_points)
+            """ 分割後のアンカー2つの距離を測り距離が一定以上なら分割する """
+
+        new_shape = pydiffvg.Path(
+            num_control_points = new_ncp,
+            points = new_points,
+            stroke_width = shape.stroke_width,
+            is_closed = shape.is_closed,
+        )
+        new_shapes.append(new_shape)
+    # print(new_ncp.size())
+    # print("new_poitns size: ", new_points.size())
+    # print("dasa", new_points.requires_grad, new_points.is_leaf)
+    print("-> ", shapes[0].points.size()[0])
+    return new_shapes
+
+def _derivative(t, P):
+    dx_dt = -3*(1-t)**2 * P[0] + 3*(1-t)**2 * P[1] - 6*(1-t)*t * P[1] - 3*t**2 * P[2] + 6*(1-t)*t * P[2] + 3*t**2 * P[3]
+    dy_dt = -3*(1-t)**2 * P[0] + 3*(1-t) * t**2 * P[0] - 6*(1-t)*t * P[1] + 6*(1-t)*t * P[2] - 3*t**2 * P[2] + 3*t**2 * P[3]
+    return np.sqrt(dx_dt**2 + dy_dt**2)
+def bezier_curve_length(P):
+    # ベジェ曲線の曲線長(近似)
+    length, _ = quad(lambda t: _derivative(t, P), 0, 1)
+    return length
+
+def _deCasteljau(points, t):
+    # t: div rate
+    ctrls0 = [points[0]]
+    ctrls1 = [points[-1]]
+    num_p = points.size()[0]
+    while num_p > 1:
+        points = _get_dividing_points(points,t)
+        ctrls0.append(points[0])
+        ctrls1.append(points[-1])
+        num_p = num_p - 1
+    ctrls0 = torch.stack(ctrls0)
+    ctrls1 = torch.stack(ctrls1[::-1]) # reverse
+    return ctrls0, ctrls1
+def _get_dividing_points(points, t):
+    # print(points)
+    n = points.size()[0]
+    if n == 1: 
+        return points
+    new_points = []
+    for i in range(n-1):
+        new_points.append((points[i+1]-points[i])*t+points[i])
+    new_points = torch.stack(new_points)
+    return new_points

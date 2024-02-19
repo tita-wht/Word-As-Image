@@ -43,4 +43,69 @@ conformal_0.5_dist_pixel_100_kernel201:
       use_conformal_loss: true
       angeles_w: 0.5
 
+svg_image:
+  parent_config: baseline
+  level_of_cc: 1
+  num_iter: 1000
+  num_paths: 200
+  bg: false
+  save:
+    video: true
+    video_frame_freq: 2
+  crop_part: 0
+  loss:
+    tone:
+      use_tone_loss: true
+      dist_loss_weight: 200
+      pixel_dist_kernel_blur: 51
+      pixel_dist_sigma: 30
+    conformal:
+      use_conformal_loss: false
+      angeles_w: 0.5
+    dt:
+      use_dt_loss: false
+      dt_w: 10
+    xing:
+      use_xing_loss: false
+      xing_w: 1
 
+  lr:
+    lr_delay_mult: 0.1
+    lr_delay_steps: 100
+    lr_init: 0.1
+    lr_final: 0.01
+  lr_base:
+    point: 1
+    color: 0.01
+  lr_color:
+    lr_delay_mult: 0.1
+    lr_delay_steps: 50
+    lr_init: 1
+    lr_final: 1
+ab_Lrad:
+  parent_config: svg_image
+  loss:
+    xing:
+      xing_w: 0
+
+ab_Ltone:
+  parent_config: svg_image
+  loss:
+    tone:
+      use_tone_loss: true
+      dist_loss_weight: 0
+      pixel_dist_kernel_blur: 51
+      pixel_dist_sigma: 30
+
+ab_tonekernel:
+  parent_config: svg_image
+  loss:
+    tone:
+      use_tone_loss: true
+      dist_loss_weight: 300
+      pixel_dist_kernel_blur: 201
+      pixel_dist_sigma: 30
+
+ex_npath:
+  parent_config: svg_image
+  num_paths: 1024
